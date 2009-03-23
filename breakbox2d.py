@@ -33,7 +33,7 @@ class fwContactPoint:
 worldAABB=box2d.b2AABB()
 worldAABB.lowerBound = (-40.0, -30.0)
 worldAABB.upperBound = ( 40.0, 40.0)
-gravity = (0.0, -40.0)
+gravity = (0.0, -10.0)
 world = box2d.b2World(worldAABB, gravity, True)
 
 bodyDef = box2d.b2BodyDef()
@@ -43,8 +43,9 @@ bodyDef.fixedRotation = True
 body = world.CreateBody(bodyDef)
 shapeDef = box2d.b2PolygonDef()
 shapeDef.SetAsBox(6, 0.8)
-shapeDef.density = 10
+shapeDef.density = 0.1
 shapeDef.friction = 0
+shapeDef.restitution = 1 
 shapeDef.userData = 'bat'
 body.CreateShape(shapeDef)
 body.SetMassFromShapes()
@@ -55,7 +56,7 @@ ballbodydef.isBullet = True
 ballbodydef.angularDamping = 1000000
 ball = world.CreateBody(ballbodydef)
 ballshapedef = box2d.b2CircleDef()
-ballshapedef.density = 1
+ballshapedef.density = 0.1 
 ballshapedef.friction = 0
 ballshapedef.restitution = 0.8 
 ballshapedef.radius = 2
@@ -77,7 +78,7 @@ groundShapeDef.SetAsBox(1, 80, (39,0),0)
 groundBody.CreateShape(groundShapeDef)
 groundShapeDef.SetAsBox(1, 80, (-39,0),0)
 groundBody.CreateShape(groundShapeDef)
-timeStep = .5 / 60.0
+timeStep = 0.75 / 60.0
 velocityIterations = 3 
 positionIterations = 3
 
@@ -103,15 +104,70 @@ def toWorld(pt):
 def shape_pos(body,shape):
     return [toScreen(body.GetWorldPoint(localPoint)) for localPoint in shape.vertices]
 
-class BlockSprite(pygame.sprite.Sprite):
-    
-    def __init__(self, color,pos, x,y):
-        pygame.sprite.Sprite.__init__(self)
-        self.image = pygame.Surface([x, y])
-        self.image.fill(color)
-        self.rect = self.image.get_rect()
-        self.rect.center = pos
+class Block(object):
+
+    def __init__(self, position, x, y, destroy =0, shape ='box', col = (100,10,60)):
+
+        self.position = position
+        self.x = x
+        self.y = y
+        self.col = col
+        self.shape_type = shape
+        self.destroy = destroy
+        self.blockdef = box2d.b2BodyDef()
+        self.blockdef.position = position 
+        self.shape()
+        self.alive = False 
+
+    def shape(self):
+
+        if self.shape_type == 'box':
+            self.blockShapeDef = box2d.b2PolygonDef()
+            self.blockShapeDef.friction =0.3
+            self.blockShapeDef.SetAsBox(self.x, self.y)#, self.position ,0)
+        if self.shape_type == 'circle':
+            self.blockShapeDef = box2d.b2CircleDef()
+            self.blockShapeDef.friction =0.3
+            #self.blockShapeDef.localPosition.Set(*self.position)
+            self.blockShapeDef.localPosition.Set(0,0)
+            self.blockShapeDef.radius = self.x
+        if self.shape_type == 'triangle':
+            self.blockShapeDef = box2d.b2PolygonDef()
+            self.blockShapeDef.friction =0.3
+            self.blockShapeDef.setVertices( [ (-self.x, 0.0), (self.x, 0.0), (0.0, self.y*2) ])
+                                                  
+
+
+    def add_to_blocks(self,blocks):
         
+        self.blockShapeDef.userData = 'block%s' % blocks.number
+        self.blockbody = world.CreateBody(self.blockdef)
+        self.alive = True 
+        self.blockshape = self.blockbody.CreateShape(self.blockShapeDef)
+        blocks.blockbodies[self.blockShapeDef.userData] = self
+        blocks.number = blocks.number + 1
+        self.blocks = blocks
+
+    def draw(self):
+        if self.alive is False:
+            return
+        if self.shape_type in ('box','triangle'):
+            pygame.draw.polygon(screen, self.col, shape_pos(self.blockbody, self.blockbody.shapeList[0]), 3)
+        if self.shape_type == 'circle':
+            pygame.draw.circle(screen, self.col, toScreen_t(self.position), self.x*10, 2)
+
+    def delete(self, point):
+
+        if self.destroy == 0:
+            self.blocks.to_delete.append(self.blockShapeDef.userData)
+        elif self.destroy > 0:
+            if (ball.linearVelocity.x * point.normal.x) ** 2 + (ball.linearVelocity.y * point.normal.y) ** 2 > self.destroy:
+                self.blocks.to_delete.append(self.blockShapeDef.userData)
+        else:
+            if (ball.linearVelocity.x * point.normal.x) ** 2 + (ball.linearVelocity.y * point.normal.y) ** 2 < abs(self.destroy):
+                self.blocks.to_delete.append(self.blockShapeDef.userData)
+
+
 class Blocks(object):
     
     def __init__(self):
@@ -119,40 +175,28 @@ class Blocks(object):
         self.number = 1
         self.to_delete = []
 
-    def add_block(self, position, x ,y):
+    def add_block(self, block):
 
-        blockdef = box2d.b2BodyDef()
-        blockdef.position = (0, 0) 
-        blockbody = world.CreateBody(blockdef)
-        blockShapeDef = box2d.b2PolygonDef()
-        blockShapeDef.friction =0.3
-        blockShapeDef.SetAsBox(x, y, position ,0)
-        blockShapeDef.userData = 'block%s' % self.number
-        blockshape = blockbody.CreateShape(blockShapeDef)
-        sprite = BlockSprite((100,10,60), toScreen_t(position),x*20,y*20)
-        screen.blit(sprite.image,sprite.rect)
-        self.blockbodies['block%s' % self.number] = [blockbody, False, sprite]
-        self.number = self.number + 1
+        block.add_to_blocks(self)
 
     def delete_blocks(self):
         for block in self.to_delete:
-            if self.blockbodies[block][1] == False:
-                self.blockbodies[block][0].ClearUserData()
-                world.DestroyBody(self.blockbodies[block][0])
-                self.blockbodies[block][1] = True
+            if self.blockbodies[block].alive == True:
+                self.blockbodies[block].blockbody.ClearUserData()
+                world.DestroyBody(self.blockbodies[block].blockbody)
+                self.blockbodies[block].alive = False
         to_delete = []
-       
 
     def draw_blocks(self):
         for block in self.blockbodies.itervalues():
-            blockbody = block[0]
-            if block[1] == False:
-                pygame.draw.polygon(screen, (100,10,60), shape_pos(blockbody, blockbody.shapeList[0]), 3)
+            block.draw()
+
+    
 
 blocks = Blocks()
 for l in range(-1,3):
-    for i in range(-4,4):
-        blocks.add_block((i*8,l*8),2,2)
+    for i in range(-4,3):
+        blocks.add_block(Block((i*8,l*8),2,2, 800, 'circle'))
 
 
 
@@ -162,7 +206,7 @@ md = box2d.b2MouseJointDef()
 md.body1   = body # world.GetGroundBody()
 md.body2   = body
 md.target  = body.GetWorldCenter() # toWorld(pygame.mouse.get_pos())
-md.maxForce= 10000000000000.0 
+md.maxForce= 100000.0 
 mouseJoint = world.CreateJoint(md).getAsType()
 body.WakeUp()
 delete = []
@@ -199,28 +243,32 @@ class fwContactListener(box2d.b2ContactListener):
           (point.shape2.userData == 'ball' and point.shape1.userData == "bat" ):
 
             new = body.linearVelocity.copy()
-            new.y = 20
+            new.y = abs(new.y) 
             if new.x >= 0:
-                new.x = -sqrt(abs(new.x*200))
+                new.x = -sqrt(abs(new.x*1.5))
             else:
-                new.x = sqrt(abs(new.x*200))
+                new.x = sqrt(abs(new.x*1.5))
 
             ball.ApplyImpulse(new,ball.GetWorldCenter())
 
         if (point.shape1.userData == 'ball' and point.shape2.userData.startswith("block") ) or\
           (point.shape2.userData == 'ball' and point.shape1.userData.startswith("block") ):
-            
-            if point.shape2.userData.startswith("block"):
-                global blocks
-                if (ball.linearVelocity.x - point.normal.x) ** 2 + (ball.linearVelocity.y - point.normal.y) ** 2 > 2000:
-                    blocks.to_delete.append(point.shape2.userData)
 
-            if point.shape1.userData.startswith("block"):
-                global blocks
-                if (ball.linearVelocity.x - point.normal.x) ** 2 + (ball.linearVelocity.y - point.normal.y) ** 2 > 2000:
-                    blocks.to_delete.append(point.shape1.userData)
+            if point.shape2.userData.startswith("block"):
+                userdata = point.shape2.userData
+            else:
+                userdata = point.shape1.userData
+
+
+             
+            global blocks
+            blocks.blockbodies[userdata].delete(point)
+            #if (ball.linearVelocity.x - point.normal.x) ** 2 + (ball.linearVelocity.y - point.normal.y) ** 2 < 650:
+            #    blocks.to_delete.append(userdata)
+
 
 start = True
+freemouse = False
 
 contact_listener = fwContactListener()
 world.SetContactListener(contact_listener)
@@ -229,6 +277,11 @@ while loop:
     for event in pygame.event.get():
         if event.type == QUIT or (event.type == KEYDOWN and event.key == K_ESCAPE):
             loop =False
+        if event.type == KEYDOWN:
+            if freemouse == False:
+                freemouse = True
+            else:
+                freemouse = False 
 
     world.Step(timeStep, velocityIterations, positionIterations)
 
@@ -246,10 +299,12 @@ while loop:
             mouse_pos = (mouse_pos[0], 580)
         if mouse_pos[1] < 450 :
             mouse_pos = (mouse_pos[0], 450)
-        pygame.mouse.set_pos(mouse_pos)
+        if not freemouse:
+            pygame.mouse.set_pos(mouse_pos)
 
 
-    mouseJoint.SetTarget(toWorld(mouse_pos))
+    if not freemouse:
+        mouseJoint.SetTarget(toWorld(mouse_pos))
     screen.fill( (0,0,0) )
     pygame.draw.circle(screen, (100,10,60), toScreen(ball.position) , 20, 2)
     #pygame.draw.rect(screen,(100,10,60), pygame.Rect(pos[0] -10 , pos[1] -10,20,20), 3)
